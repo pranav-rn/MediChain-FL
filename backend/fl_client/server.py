@@ -2,6 +2,7 @@
 
 import base64
 import uuid
+import hashlib
 
 import flwr as fl
 import numpy as np
@@ -13,8 +14,17 @@ from pathlib import Path
 
 # Add backend to path to import model
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent / "blockchain" / "python"))
 from model import load_model
 from utils.encryption import HEManager
+
+# Try to import blockchain client (optional)
+try:
+    from blockchain_client import log_gradient_update, get_reputation, get_token_balance
+    BLOCKCHAIN_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️  Blockchain integration not available: {e}")
+    BLOCKCHAIN_AVAILABLE = False
 
 class PartialUpdateStrategy(fl.server.strategy.FedAvg):
     def __init__(self, initial_parameters: Parameters, use_homomorphic_encryption: bool = True, **kwargs):
@@ -79,17 +89,85 @@ class PartialUpdateStrategy(fl.server.strategy.FedAvg):
             # In case of failure, return the last known good model to continue
             current_full_params = self.initial_parameters if self.initial_parameters else None
             return current_full_params, {}
+        
         print(f"\n🔄 ROUND {server_round} - Aggregating {len(results)} PARTIAL client updates.")
+        
+        # ===== ANOMALY DETECTION: L2 NORM THRESHOLDING =====
+        print(f"\n🛡️  ANOMALY DETECTION - Checking gradient norms...")
+        client_norms = []
+        for client, fit_res in results:
+            # Calculate L2 norm of the update
+            update_arrays = parameters_to_ndarrays(fit_res.parameters)
+            update_vector = np.concatenate([arr.flatten() for arr in update_arrays])
+            norm = np.linalg.norm(update_vector)
+            client_norms.append((client, norm))
+            print(f"   Client {client.cid}: L2 Norm = {norm:.4f}")
+        
+        # Calculate median-based threshold
+        norms_only = [norm for _, norm in client_norms]
+        median_norm = np.median(norms_only)
+        # Threshold: 2x median (tunable)
+        norm_threshold = median_norm * 2.0
+        
+        print(f"\n   📊 Median Norm: {median_norm:.4f}")
+        print(f"   🚨 Threshold (2x median): {norm_threshold:.4f}")
+        
+        # Filter out anomalous updates
+        good_results = []
+        flagged_clients = []
+        
+        for i, (client, fit_res) in enumerate(results):
+            client_norm = client_norms[i][1]
+            if client_norm > norm_threshold:
+                print(f"   🚨 FLAGGED: Client {client.cid} (norm {client_norm:.4f} > {norm_threshold:.4f})")
+                flagged_clients.append(client.cid)
+            else:
+                print(f"   ✅ PASSED: Client {client.cid} (norm {client_norm:.4f} ≤ {norm_threshold:.4f})")
+                good_results.append((client, fit_res))
+        
+        if not good_results:
+            print(f"\n⚠️  All clients flagged as anomalous! Skipping aggregation.")
+            return self.initial_parameters, {}
+        
+        print(f"\n✅ Proceeding with {len(good_results)}/{len(results)} validated clients.")
+        
+        # ===== BLOCKCHAIN LOGGING =====
+        if BLOCKCHAIN_AVAILABLE:
+            print(f"\n🔗 Logging updates to blockchain...")
+            # Log good clients
+            for client, fit_res in good_results:
+                try:
+                    # Hash the client's update
+                    update_arrays = parameters_to_ndarrays(fit_res.parameters)
+                    update_bytes = b''.join([arr.tobytes() for arr in update_arrays])
+                    gradient_hash = hashlib.sha256(update_bytes).hexdigest()
+                    
+                    # Log to blockchain with hospital_id (client.cid)
+                    receipt = log_gradient_update(gradient_hash, flagged=False, hospital_id=client.cid)
+                    print(f"   ✅ {client.cid}: Logged to blockchain (Block #{receipt['blockNumber']})")
+                except Exception as e:
+                    print(f"   ⚠️  Failed to log {client.cid}: {e}")
+            
+            # Log flagged clients
+            for client_id in flagged_clients:
+                try:
+                    gradient_hash = f"flagged_{client_id}_round_{server_round}"
+                    receipt = log_gradient_update(gradient_hash, flagged=True, hospital_id=client_id)
+                    print(f"   🚨 {client_id}: Flagged on blockchain (Block #{receipt['blockNumber']})")
+                except Exception as e:
+                    print(f"   ⚠️  Failed to flag {client_id}: {e}")
+        # ===== END BLOCKCHAIN LOGGING =====
 
-        use_encrypted_path = self.he_manager is not None and self._payload_is_encrypted(results)
+        use_encrypted_path = self.he_manager is not None and self._payload_is_encrypted(good_results)
         if use_encrypted_path:
-            return self._aggregate_encrypted_fit(server_round, results)
-        return self._aggregate_plain_fit(server_round, results)
+            return self._aggregate_encrypted_fit(server_round, good_results, flagged_clients)
+        return self._aggregate_plain_fit(server_round, good_results, flagged_clients)
 
     def _aggregate_plain_fit(
         self,
         server_round: int,
         results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+        flagged_clients: List[str] = None,
     ) -> Tuple[Optional[Parameters], Dict[str, fl.common.Scalar]]:
         current_weights = parameters_to_ndarrays(self.initial_parameters)
         state_dict = dict(zip(self.all_param_keys, current_weights))
@@ -113,6 +191,7 @@ class PartialUpdateStrategy(fl.server.strategy.FedAvg):
         self,
         server_round: int,
         results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+        flagged_clients: List[str] = None,
     ) -> Tuple[Optional[Parameters], Dict[str, fl.common.Scalar]]:
         if not self.he_manager:
             raise RuntimeError("HE aggregation requested but HE manager is not initialized")
