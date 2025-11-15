@@ -1,5 +1,6 @@
 from web3 import Web3
 import json
+from pathlib import Path
 
 RPC = "http://127.0.0.1:8545"
 PROXY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
@@ -8,9 +9,19 @@ PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff8
 
 w3 = Web3(Web3.HTTPProvider(RPC))
 
-with open("abi.json") as f:
-    abi_data = json.load(f)
-    ABI = abi_data["abi"] if isinstance(abi_data, dict) else abi_data
+# Load ABI from file relative to this module
+BASE_DIR = Path(__file__).parent
+ABI_FILE = BASE_DIR / "abi.json"
+ARTIFACT_JSON = BASE_DIR.parent / "artifacts" / "contracts" / "MediChainFL.sol" / "MediChainFL.json"
+
+if ABI_FILE.exists():
+    abi_data = json.loads(ABI_FILE.read_text())
+elif ARTIFACT_JSON.exists():
+    abi_data = json.loads(ARTIFACT_JSON.read_text())
+else:
+    raise FileNotFoundError(f"ABI not found. Checked: {ABI_FILE} and {ARTIFACT_JSON}")
+
+ABI = abi_data["abi"] if isinstance(abi_data, dict) else abi_data
 
 contract = w3.eth.contract(address=PROXY_ADDRESS, abi=ABI)
 
