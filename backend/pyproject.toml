@@ -10,4 +10,5 @@ dependencies = [
     "flwr>=1.23.0",
     "tenseal>=0.3.16",
     "uvicorn>=0.38.0",
+    "web3>=7.14.0",
 ]
