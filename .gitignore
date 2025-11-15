@@ -69,3 +69,4 @@ models/
 # Frontend (if you later add a frontend)
 # node_modules/
 # build/ # For React apps
+__pycache__/
