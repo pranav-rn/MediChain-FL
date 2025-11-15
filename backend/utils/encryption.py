@@ -26,7 +26,7 @@ class HEManager:
     
     def __init__(
         self,
-        poly_modulus_degree: int = 4096,
+        poly_modulus_degree: int = 8192,
         coeff_mod_bit_sizes: List[int] = None,
         global_scale: int = 2**40
     ):
@@ -46,12 +46,19 @@ class HEManager:
         - More levels = more multiplications possible before noise overwhelms
         """
         
-        # Default coefficient modulus chain
+        # Default coefficient modulus chain based on polynomial degree
         if coeff_mod_bit_sizes is None:
-            # [60, 40, 40, 60] supports ~2 multiplications
-            # First and last (60-bit) are for key generation
-            # Middle values (40-bit) are computation levels
-            coeff_mod_bit_sizes = [60, 40, 40, 60]
+            # TenSEAL security constraints for total coefficient modulus bits:
+            # 4096 -> max ~109 bits, 8192 -> max ~218 bits, 16384 -> max ~438 bits
+            if poly_modulus_degree == 4096:
+                coeff_mod_bit_sizes = [40, 21, 21, 40]  # Total: 122 bits (safe for 4096)
+            elif poly_modulus_degree == 8192:
+                coeff_mod_bit_sizes = [60, 40, 40, 60]  # Total: 200 bits (safe for 8192)
+            elif poly_modulus_degree == 16384:
+                coeff_mod_bit_sizes = [60, 40, 40, 40, 40, 60]  # Total: 280 bits
+            else:
+                # Conservative fallback
+                coeff_mod_bit_sizes = [40, 21, 40]
         
         print("🔐 Initializing CKKS Homomorphic Encryption Context...")
         print(f"   Polynomial degree: {poly_modulus_degree}")

@@ -174,7 +174,7 @@ class PneumoniaClient(fl.client.NumPyClient):
         encrypted = self.he_manager.encrypt_gradients(params, encrypt_all=False)
         return self.he_manager.serialize_vectors(encrypted)
 
-def start_client(hospital_id: str, server_address: str = "localhost:8080"):
+def start_client(hospital_id: str, server_address: str = "localhost:8080", data_root: str = None):
     # Determine device
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -183,14 +183,34 @@ def start_client(hospital_id: str, server_address: str = "localhost:8080"):
     else:
         device = torch.device("cpu")
 
+    # Determine data path: use provided data_root or auto-detect
+    if data_root is None:
+        # Check if running in Docker (look for /app/data)
+        import os
+        if os.path.exists("/app/data"):
+            data_path = f"/app/data/{hospital_id}"
+        else:
+            # Running locally - use path relative to repo root
+            # Script is in backend/fl_client/, so go up two levels to reach repo root
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            repo_root = os.path.dirname(os.path.dirname(script_dir))
+            data_path = os.path.join(repo_root, "data", hospital_id)
+    else:
+        data_path = f"{data_root}/{hospital_id}"
 
     client = PneumoniaClient(
         hospital_id,
-        f"/app/data/{hospital_id}",
+        data_path,
         device=device
     )
 
-    fl.client.start_client(server_address="flower_server:8080", client=client.to_client())
+    # Server address: use flower_server for Docker, localhost for local
+    if server_address == "localhost:8080":
+        import os
+        if os.path.exists("/app/data"):
+            server_address = "flower_server:8080"
+    
+    fl.client.start_client(server_address=server_address, client=client.to_client())
 
 if __name__ == "__main__":
     import sys
