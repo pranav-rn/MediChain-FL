@@ -117,28 +117,32 @@ class PartialUpdateStrategy(fl.server.strategy.FedAvg):
         if not self.he_manager:
             raise RuntimeError("HE aggregation requested but HE manager is not initialized")
 
+        print(f"🔐 Round {server_round} - Performing homomorphic aggregation (encrypted domain)")
+        
         serialized_updates = [parameters_to_ndarrays(fit_res.parameters) for _, fit_res in results]
         sample_counts = [fit_res.num_examples for _, fit_res in results]
 
+        # Deserialize encrypted vectors from clients
         encrypted_updates = [self.he_manager.deserialize_vectors(update) for update in serialized_updates]
-        aggregated_encrypted = self.he_manager.aggregate_encrypted_weighted(encrypted_updates, sample_counts)
-        decrypted_layers = self.he_manager.decrypt_gradients(aggregated_encrypted)
         
-        current_weights = parameters_to_ndarrays(self.initial_parameters)
-        state_dict = dict(zip(self.all_param_keys, current_weights))
-        aggregated_updates_dict = {}
-        for key, flat_values in zip(self.trainable_param_keys, decrypted_layers):
-            shape = self.trainable_param_shapes[key]
-            target_dtype = state_dict[key].dtype
-            reshaped = flat_values.reshape(shape).astype(target_dtype, copy=False)
-            aggregated_updates_dict[key] = reshaped
-        state_dict.update(aggregated_updates_dict)
+        # CRITICAL: Aggregate in encrypted domain - server never sees plaintext!
+        aggregated_encrypted = self.he_manager.aggregate_encrypted_weighted(encrypted_updates, sample_counts)
+        
+        # Serialize the ENCRYPTED aggregated result (DO NOT DECRYPT!)
+        serialized_encrypted = self.he_manager.serialize_vectors(aggregated_encrypted)
+        
+        # Convert to Parameters to send back to clients
+        # Clients will receive ENCRYPTED aggregates and decrypt locally
+        encrypted_parameters = ndarrays_to_parameters(serialized_encrypted)
+        
+        # Store encrypted aggregates (server never decrypts!)
+        self.initial_parameters = encrypted_parameters
 
-        updated_full_parameters = ndarrays_to_parameters(list(state_dict.values()))
-        self.initial_parameters = updated_full_parameters
-
-        print(f"✅ Round {server_round} - HE aggregation complete. Full model updated.")
-        return updated_full_parameters, self._aggregate_metrics(results)
+        print(f"🔐 Round {server_round} - Homomorphic aggregation complete.")
+        print(f"   ✅ Server NEVER decrypted the weights - privacy preserved!")
+        print(f"   ✅ Encrypted aggregated weights sent back to clients")
+        
+        return encrypted_parameters, self._aggregate_metrics(results)
 
     @staticmethod
     def _aggregate_metrics(

@@ -322,6 +322,10 @@ class HEManager:
             vectors.append(ts.ckks_vector_from(self.context, contiguous.tobytes()))
         return vectors
     
+    def deserialize_encrypted(self, serialized_bytes: bytes) -> ts.CKKSVector:
+        """Deserialize a single encrypted vector from bytes"""
+        return ts.ckks_vector_from(self.context, serialized_bytes)
+    
     def get_context_info(self) -> dict:
         """Get information about the encryption context"""
         return {
