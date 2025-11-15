@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Optional
 import numpy as np
+import tenseal as ts
 
 # Add blockchain python directory to path
 blockchain_path = Path(__file__).parent.parent / "blockchain" / "python"
@@ -225,14 +226,20 @@ class BlockchainFLServer:
         if client_ids is None:
             client_ids = [f"client_{i}" for i in range(len(client_gradients))]
         
-        # Step 1: Encrypt each client's gradients
-        print("STEP 1: ENCRYPTING CLIENT GRADIENTS")
+        # Step 1: Check if gradients are already encrypted or need encryption
+        print("STEP 1: PREPARING CLIENT GRADIENTS")
         print("-" * 60)
         encrypted_list = []
         for i, (client_id, gradients) in enumerate(zip(client_ids, client_gradients)):
             print(f"Client {i+1} ({client_id}):")
-            encrypted = self.he_manager.encrypt_gradients(gradients, encrypt_all=False)
-            encrypted_list.append(encrypted)
+            # Check if gradients are already encrypted (CKKSVector objects)
+            if gradients and isinstance(gradients[0], ts.CKKSVector):
+                print(f"   ✓ Already encrypted: {len(gradients)} layers")
+                encrypted_list.append(gradients)
+            else:
+                # Need to encrypt
+                encrypted = self.he_manager.encrypt_gradients(gradients, encrypt_all=False)
+                encrypted_list.append(encrypted)
         
         # Step 2: Homomorphic aggregation
         print("\nSTEP 2: HOMOMORPHIC AGGREGATION")

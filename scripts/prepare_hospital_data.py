@@ -4,13 +4,24 @@ import shutil
 from pathlib import Path
 import random
 
-def prepare_hospital_data(base_data_path="data/chest_xray/train", output_dir="data", splits=[150, 175]):
+# Get the project root directory (parent of scripts directory)
+SCRIPT_DIR = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+
+def prepare_hospital_data(base_data_path=None, output_dir=None, splits=[150, 175]):
     """
     Splits the base dataset into hospital-specific directories for 2 hospitals.
     Ensures 'NORMAL' and 'PNEUMONIA' subfolders are created for ImageFolder.
     """
-    base_data_path = Path(base_data_path)
-    output_dir = Path(output_dir)
+    if base_data_path is None:
+        base_data_path = PROJECT_ROOT / "data" / "chest_xray" / "train"
+    else:
+        base_data_path = Path(base_data_path)
+    
+    if output_dir is None:
+        output_dir = PROJECT_ROOT / "data"
+    else:
+        output_dir = Path(output_dir)
 
     normal_images = list((base_data_path / "NORMAL").glob("*.jpeg"))
     pneumonia_images = list((base_data_path / "PNEUMONIA").glob("*.jpeg"))
@@ -59,9 +70,14 @@ if __name__ == "__main__":
     # Clear existing hospital data directories first
     print("Clearing existing hospital data directories...")
     for i in range(1, 3): # Only for hospital_1 and hospital_2
-        if Path(f"data/hospital_{i}").exists():
-            shutil.rmtree(f"data/hospital_{i}")
+        hospital_dir = PROJECT_ROOT / "data" / f"hospital_{i}"
+        if hospital_dir.exists():
+            shutil.rmtree(hospital_dir)
     
     # Run data preparation. Adjust `base_data_path` if your unzipped structure is different.
-    prepare_hospital_data(base_data_path="data/chest_xray/train", output_dir="data", splits=[150, 175])
+    prepare_hospital_data(
+        base_data_path=PROJECT_ROOT / "data" / "chest_xray" / "train",
+        output_dir=PROJECT_ROOT / "data",
+        splits=[150, 175]
+    )
     print("\nData preparation complete. You can now run docker-compose up.")
